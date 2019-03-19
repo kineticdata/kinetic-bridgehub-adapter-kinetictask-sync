@@ -122,7 +122,7 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
         
         request.setStructure("kinetic-task-sync-log");
         request.setFields(fields);
-        request.setQuery("callbackId=a7e48bf9-d583-4106-b769-06be9836f729");
+        request.setQuery("callbackId=06fa0a05-1818-4e3c-9b90-686afc23df64");
         
         Record record = getAdapter().retrieve(request);
         Map<String,Object> recordMap = record.getRecord();

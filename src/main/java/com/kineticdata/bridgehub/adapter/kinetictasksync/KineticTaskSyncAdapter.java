@@ -117,8 +117,6 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         if (!retrieveForm()) {
             createForm();
         }
-        
-        // check timeout input value
                 
         // Calculate the forced termination time
         Integer timeOut = 0;
@@ -206,14 +204,14 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
                 // Delete the corresponding submission
                 deleteRecord((String)submission.get("id"));
                 
-                record.put("Results", (String)((JSONObject)submission.get("values"))
+                record.put("results", (String)((JSONObject)submission.get("values"))
                     .get("Results"));
                 record.put("status", STATUS_COMPLETE);
             }
         } catch (Exception e) {
             logger.error("Unexpected exception encountered.", e);
             record.put("status", STATUS_FAILED);
-            record.put("message", e.getMessage());
+            record.put("error", e.getMessage());
         }
         
         // Create and return a Record object.
@@ -285,8 +283,12 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         logger.trace("DataStore Lookup - Raw Output: "+output);
         
-        if (response.getStatusLine().getStatusCode() == 200) {
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode == 200) {
             formFound = true;
+        } else {
+            logger.error("Received an HTTP " + statusCode + " response "
+                + "when retrieving " + SYNC_FORM + "form: " + output);
         }
         
         return formFound;
@@ -295,7 +297,7 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
     private void createForm() throws BridgeError {
         
         InputStream formContentStream = KineticTaskSyncAdapter.class
-            .getResourceAsStream("/form-definition.json");
+            .getResourceAsStream("/META-INF/adapters/kinetic-task-sync-log.json");
         
         logger.debug("The input stream is: ", formContentStream);
         
@@ -309,6 +311,7 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
             throw new BridgeError("There was a problem reading the form definition"
                 + "In the Kinetic Task Sync adapter");            
         }
+        
         // Build up the url that you will use to retrieve the source data. Use
         // the query variable instead of request.getQuery() to get a query 
         // without parameter placeholders.
@@ -352,6 +355,15 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
                 + " Service");
         }
         logger.trace("Tree Start Return - Raw Output: "+output);
+        
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode != 200) {
+            throw new BridgeError("Received an HTTP " + statusCode + " response "
+                + "when trying to create the " + SYNC_FORM + "form: " + output); 
+        }
+                
+        // Parse the Response String into a JSON Object
+        JSONObject json = (JSONObject)JSONValue.parse(output);
     }
     
     private boolean deleteRecord(String submissionId) throws BridgeError, Exception {
@@ -387,11 +399,13 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         logger.trace("DataStore Delete - Raw Output: "+output);
 
-        if (response.getStatusLine().getStatusCode() == 200) {
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode != 200) {
             deleted = true;
         } else {
-            logger.error("Unable to cleanup datastore record with submission id "
-                + "of \"{}\"", submissionId);
+            logger.error("Received an HTTP " + statusCode + " response when "
+                + "attempting to delete datastore record with submission id "
+                + "of \"{}\": \"{}\"", submissionId, output);
         }
         
         return deleted;
@@ -436,16 +450,15 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         logger.trace("DataStore Lookup - Raw Output: "+output);
         
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode != 200) {
+            throw new Exception("Received an HTTP " + statusCode + " response "
+                + "when trying to retrieve record with callback Id " 
+                + callbackId + " : " + output); 
+        }
+                
         // Parse the Response String into a JSON Object
         JSONObject json = (JSONObject)JSONValue.parse(output);
-        
-        int statusCode = response.getStatusLine().getStatusCode();
-        if ((statusCode < 200 || statusCode >= 300) && statusCode != 320) {
-            
-            throw new Exception("An error occurred trying to retrieve record "
-                + "with callback Id " + callbackId + " : " 
-                + (String)json.get("message")); 
-        }
         
         // Empty array will guard the submission.size calls.
         JSONArray submissions = json.get("submissions") == null ? new JSONArray() 
@@ -453,7 +466,7 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         
         JSONObject submission = submissions.size() > 0 
             ? (JSONObject)submissions.get(0) : null;
-        
+       
         return submission;
     }
     
@@ -474,7 +487,7 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         
         JSONObject queryJson = convertToJson(query);
-        queryJson.put("Callback Id", callbackId);
+        queryJson.put("callbackId", callbackId);
 
         // Initialize the HTTP Client, Response, and Get objects.
         HttpClient client = HttpClients.createDefault();
@@ -516,15 +529,15 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         logger.trace("Tree Start Return - Raw Output: "+output);
 
+        int statusCode = response.getStatusLine().getStatusCode();
+        if (statusCode != 200) {
+            throw new Exception("Received an HTTP " + statusCode + " response "
+                + "when trying to retrieve record with callback Id " 
+                + callbackId + " : " + output); 
+        }
+                
         // Parse the Response String into a JSON Object
         JSONObject json = (JSONObject)JSONValue.parse(output);
-        
-        int statusCode = response.getStatusLine().getStatusCode();
-        if ((statusCode < 200 || statusCode >= 300) && statusCode != 320) {
-            
-            throw new Exception("An error occurred trying to start the tree: "
-                + (String)json.get("message")); 
-        }
         
         return json;
     }
