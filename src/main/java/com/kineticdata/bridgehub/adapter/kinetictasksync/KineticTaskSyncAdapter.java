@@ -67,6 +67,7 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
     private String coreApiPassword;
     private String coreApiWebServer;
     private String setTimeOut;
+    private int timeOut;
 
     /** Defines the collection of property names for the adapter */
     public static class Properties {
@@ -112,9 +113,24 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         this.coreApiPassword = properties.getValue(Properties.CORE_API_PASSWORD);
         this.coreApiWebServer = properties.getValue(Properties.CORE_API_WEB_SERVER);
         this.setTimeOut = properties.getValue(Properties.SET_TIME_OUT);
-        if (!getForm()) {
+        // check if config space has kinetic-task-sync-log datastore form
+        if (!retrieveForm()) {
             createForm();
         }
+        
+        // check timeout input value
+                
+        // Calculate the forced termination time
+        Integer timeOut = 0;
+        if (this.setTimeOut != null && !this.setTimeOut.isEmpty()) {
+            try {
+                timeOut = Integer.parseInt(this.setTimeOut);
+            } catch (NumberFormatException e) {
+                throw new RuntimeException("The timeout was set to a non integer value.");
+            }
+        }
+        
+        this.timeOut = timeOut < 0 ? DEFAULT_TIME_OUT : (int)timeOut;
     }
 
     @Override
@@ -156,46 +172,48 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         KineticTaskSyncQualificationParser parser 
             = new KineticTaskSyncQualificationParser();
         Map<String,ArrayList<String>> query = parser.parseQuery(request);
-        
-        // Generate Callback ID Or use Provided Callback
-        String callbackId = (query.get("callback") == null) 
-            ? UUID.randomUUID().toString() : query.get("callback").get(0);
-        logger.info("CallBack UUID " + callbackId);
-        
+           
         // Check if the inputted structure is valid. If it isn't, throw a BridgeError.
         if (!VALID_STRUCTURES.contains(request.getStructure())) {
             throw new BridgeError("Invalid Structure: '" + request.getStructure() 
                 + "' is not a valid structure");
         }
         
-        JSONObject json = null;
-        
-        // If callback provided don't do an additional task run.
-        if (query.get("callback") == null) {
-            json = postTask(query, callbackId);
-        }
-        
-        // Retrieve the record that was returned
-        JSONObject record = new JSONObject();
-        
-        // If posting to task doesn't fail or query had a callback parameter
-        // then start polling for datastore
-        if (json == null && !json.get("status").equals(STATUS_FAILED)) {
-            
-            JSONArray results = startPolling( callbackId );
+        // Generate Callback ID Or use Provided callbackId query.
+        String callbackId = (query.get("callbackId") == null) 
+            ? UUID.randomUUID().toString() : query.get("callbackId").get(0);
+        logger.debug("CallBack UUID " + callbackId);
 
-            if (results != null && results.size() > 0) {
-                record.put("Results", ((JSONObject)((JSONObject)results.get(0))
-                    .get("values")).get("Results"));
-                record.put("status", STATUS_COMPLETE);
-                deleteRecord(callbackId);
-            } else {
-                record.put("status", STATUS_NOT_FOUND);
-                record.put("Callback Id", callbackId);
+         // Execute the call
+        JSONObject record = new JSONObject();
+        try {
+            // If there is not a callbackId parameter (indicating this is the first call
+            // and a run should be started)
+            if (query.get("callbackId") == null) {
+                // Attempt to POST to Task to start the run
+                postTask(query, callbackId);
             }
-        } else {
-           record.put("status", json.get("status"));
-           record.put("message", json.get("message"));
+
+            // Poll for a result
+            JSONObject submission = poll(callbackId);
+            // If a result was not found
+            if (submission == null) {
+                record.put("status", STATUS_NOT_FOUND);
+                record.put("callbackId", callbackId);
+            }
+            // If a result was found
+            else {
+                // Delete the corresponding submission
+                deleteRecord((String)submission.get("id"));
+                
+                record.put("Results", (String)((JSONObject)submission.get("values"))
+                    .get("Results"));
+                record.put("status", STATUS_COMPLETE);
+            }
+        } catch (Exception e) {
+            logger.error("Unexpected exception encountered.", e);
+            record.put("status", STATUS_FAILED);
+            record.put("message", e.getMessage());
         }
         
         // Create and return a Record object.
@@ -212,23 +230,11 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
     /*----------------------------------------------------------------------------------------------
      * PRIVATE HELPER METHODS
      *--------------------------------------------------------------------------------------------*/
-    private JSONArray startPolling( String callbackId ) throws BridgeError {
-        
-        // Calculate the forced termination time
-        Integer timeOut = 0;
-        if (this.setTimeOut != null && !this.setTimeOut.isEmpty()) {
-            try {
-                timeOut = Integer.parseInt(this.setTimeOut);
-            } catch (NumberFormatException e) {
-                throw new RuntimeException("The timeout was set to a non integer value.");
-            }
-        }
-        
-        timeOut = timeOut < 0 ? DEFAULT_TIME_OUT : (int)timeOut;
-        long terminationTime = System.currentTimeMillis() + (timeOut * 1000);
-        
+    private JSONObject poll( String callbackId ) throws BridgeError, Exception {
         // Loop Waiting for Datastore Record
-        JSONArray results = null;
+        JSONObject results = null;
+        Long terminationTime = System.currentTimeMillis() + (this.timeOut * 1000);
+        
         while (results == null && System.currentTimeMillis() < terminationTime) {
             // Sleep
             try {
@@ -237,13 +243,13 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
                 throw new RuntimeException("Interrupted while sleeping.");
             }
             // Check for the result
-            results = getRecord(callbackId);
+            results = retrieveSubmission(callbackId);
         }
         
         return results;
     }
     
-    private boolean getForm() throws BridgeError {
+    private boolean retrieveForm() throws BridgeError {
         boolean formFound = false;
         
         // Build form lookup url.
@@ -287,101 +293,84 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
     }
     
     private void createForm() throws BridgeError {
-        JSONObject formDefinition = null;
         
         InputStream formContentStream = KineticTaskSyncAdapter.class
             .getResourceAsStream("/form-definition.json");
         
-        logger.debug("The input stream is: ", formContentStream.toString());
+        logger.debug("The input stream is: ", formContentStream);
         
-        JSONParser jsonParser = new JSONParser();
+        JSONObject formDefinition;
         try {
+            JSONParser jsonParser = new JSONParser();
             formDefinition = (JSONObject)jsonParser.parse(
                 new InputStreamReader(formContentStream, "UTF-8"));
-        } catch (UnsupportedEncodingException e) {
-            logger.error(e.getMessage());
-            throw new BridgeError("There was a problem reading the form definition"
-                + "In the Kinetic Task Sync adapter");            
-        } catch (IOException e) {
-            logger.error(e.getMessage());
-            throw new BridgeError("There was a problem reading the form definition"
-                + "In the Kinetic Task Sync adapter");            
-        } catch (ParseException e) {
+        } catch (Exception e) {
             logger.error(e.getMessage());
             throw new BridgeError("There was a problem reading the form definition"
                 + "In the Kinetic Task Sync adapter");            
         }
-        
-        if (formDefinition != null) {
-            // Build up the url that you will use to retrieve the source data. Use
-            // the query variable instead of request.getQuery() to get a query 
-            // without parameter placeholders.
-            String url = this.coreApiWebServer + "/app/api/v1/datastore/forms";
+        // Build up the url that you will use to retrieve the source data. Use
+        // the query variable instead of request.getQuery() to get a query 
+        // without parameter placeholders.
+        String url = this.coreApiWebServer + "/app/api/v1/datastore/forms";
 
-            // Initialize the HTTP Client, Response, and Get objects.
-            HttpClient client = HttpClients.createDefault();
-            HttpResponse response;
-            HttpPost httpPost = new HttpPost(url);
-
-            StringEntity payload;
-            try {
-                payload = new StringEntity(formDefinition.toJSONString());
-                httpPost.setEntity(payload);
-                httpPost.setHeader("Accept", "application/json");
-                httpPost.setHeader("Content-type", "application/json");
-            } catch (UnsupportedEncodingException e) {
-                logger.error(e.toString());
-                throw new BridgeError("Unsupported Encoding In data payload.");
-            }
-
-            // Append the authentication to the call. This example uses Basic 
-            // Authentication but other types can be added as HTTP GET or POST 
-            // headers as well.
-            httpPost = addBasicAuthenticationHeader(httpPost, this.coreApiUsername,
-                this.coreApiPassword);
-
-            // Make the call to the REST source to retrieve data and convert the 
-            // response from an HttpEntity object into a Java string so more response
-            // parsing can be done.
-            String output = "";
-            try {
-                response = client.execute(httpPost);
-                HttpEntity entity = response.getEntity();
-                output = EntityUtils.toString(entity);
-                logger.trace("Request response code: "+response.getStatusLine()
-                    .getStatusCode());
-            } catch (IOException e) {
-                logger.error(e.getMessage());
-                throw new BridgeError("Unable to make a connection to the REST"
-                    + " Service");
-            }
-            logger.trace("Tree Start Return - Raw Output: "+output);
-        }
-    }
-    
-    private boolean deleteRecord(String callbackId) throws BridgeError {
-        boolean deleted = false;
-
-        // Parse the Response String into a JSON Object
-        JSONObject json = (JSONObject)JSONValue.parse(getSubmission(callbackId));
-        
-        String submissionId = (String)((JSONObject)((JSONArray)
-            json.get("submissions")).get(0)).get("id");
-        
-        String url = this.coreApiWebServer + "/app/api/v1/datastore/submissions/"
-            + submissionId;
-        
         // Initialize the HTTP Client, Response, and Get objects.
         HttpClient client = HttpClients.createDefault();
         HttpResponse response;
+        HttpPost httpPost = new HttpPost(url);
+
+        StringEntity payload;
+        try {
+            payload = new StringEntity(formDefinition.toJSONString());
+            httpPost.setEntity(payload);
+            httpPost.setHeader("Accept", "application/json");
+            httpPost.setHeader("Content-type", "application/json");
+        } catch (UnsupportedEncodingException e) {
+            logger.error(e.toString());
+            throw new BridgeError("Unsupported Encoding In data payload.");
+        }
+
+        // Append the authentication to the call. This example uses Basic 
+        // Authentication but other types can be added as HTTP GET or POST 
+        // headers as well.
+        httpPost = addBasicAuthenticationHeader(httpPost, this.coreApiUsername,
+            this.coreApiPassword);
+
+        // Make the call to the REST source to retrieve data and convert the 
+        // response from an HttpEntity object into a Java string so more response
+        // parsing can be done.
+        String output = "";
+        try {
+            response = client.execute(httpPost);
+            HttpEntity entity = response.getEntity();
+            output = EntityUtils.toString(entity);
+            logger.trace("Request response code: "+response.getStatusLine()
+                .getStatusCode());
+        } catch (IOException e) {
+            logger.error(e.getMessage());
+            throw new BridgeError("Unable to make a connection to the REST"
+                + " Service");
+        }
+        logger.trace("Tree Start Return - Raw Output: "+output);
+    }
+    
+    private boolean deleteRecord(String submissionId) throws BridgeError, Exception {
+        boolean deleted = false;
+    
+        String url = this.coreApiWebServer + "/app/api/v1/datastore/submissions/"
+        + submissionId;
+
+        // Initialize the HTTP Client, Response, and Get objects.
+        HttpClient client = HttpClients.createDefault();
+        HttpResponse response = null;
         HttpDelete httpDelete = new HttpDelete(url);
-        
+
         // Append the authentication to the call. This example uses Basic 
         // Authentication but other  types can be added as HTTP GET or POST 
         // headers as well.
         httpDelete = addBasicAuthenticationHeader(httpDelete, this.coreApiUsername,
             this.coreApiPassword);
-        
+
         // Make the call to the REST source to retrieve data and convert the 
         // response from an HttpEntity object into a Java string so more 
         // response parsing can be done.
@@ -393,32 +382,24 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
             logger.trace("Request response code: "
                 + response.getStatusLine().getStatusCode());
         } catch (IOException e) {
-            logger.error(e.getMessage());
-            throw new BridgeError("Unable to make a connection to the REST Service");
+            logger.error("Unable to cleanup datastore record with submission id "
+                + "of \"{}\"", submissionId, e);
         }
         logger.trace("DataStore Delete - Raw Output: "+output);
-        
+
         if (response.getStatusLine().getStatusCode() == 200) {
             deleted = true;
+        } else {
+            logger.error("Unable to cleanup datastore record with submission id "
+                + "of \"{}\"", submissionId);
         }
         
         return deleted;
     }
     
-    private JSONArray getRecord( String callbackId ) throws BridgeError {
-        // Parse the Response String into a JSON Object
-        JSONObject json = (JSONObject)JSONValue.parse(getSubmission(callbackId));
-        // Empty array will guard the submission.size calls.
-        JSONArray submissions = json.get("submissions") == null ? new JSONArray() 
-            : (JSONArray)json.get("submissions");
-
-        logger.trace(submissions.size() + " submissions found.");
+    private JSONObject retrieveSubmission(String callbackId) throws BridgeError,
+        Exception {
         
-        // Null will cause the poller to loop agian
-        return submissions.size() > 0 ? submissions : null;
-    }
-    
-    private String getSubmission(String callbackId) throws BridgeError{
         // Build up the url that you will use to retrieve the source data.
         String url = escapeQuery(this.coreApiWebServer 
             + "/app/api/v1/datastore/forms/"+ SYNC_FORM +"/submissions"
@@ -455,18 +436,42 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         }
         logger.trace("DataStore Lookup - Raw Output: "+output);
         
-        return output;
+        // Parse the Response String into a JSON Object
+        JSONObject json = (JSONObject)JSONValue.parse(output);
+        
+        int statusCode = response.getStatusLine().getStatusCode();
+        if ((statusCode < 200 || statusCode >= 300) && statusCode != 320) {
+            
+            throw new Exception("An error occurred trying to retrieve record "
+                + "with callback Id " + callbackId + " : " 
+                + (String)json.get("message")); 
+        }
+        
+        // Empty array will guard the submission.size calls.
+        JSONArray submissions = json.get("submissions") == null ? new JSONArray() 
+            : (JSONArray)json.get("submissions");
+        
+        JSONObject submission = submissions.size() > 0 
+            ? (JSONObject)submissions.get(0) : null;
+        
+        return submission;
     }
     
     private JSONObject postTask( Map<String, ArrayList<String>> query,
-        String callbackId) throws BridgeError {
+        String callbackId) throws BridgeError, Exception {
 
         // Build up the url that you will use to retrieve the source data. Use
         // the query variable instead of request.getQuery() to get a query 
         // without parameter placeholders.
-        String url = this.taskApiWebServer + "/app/api/v1/run-tree"
-            + query.get("treeName").get(0);
-        query.remove("treeName");
+        String url;
+        try {
+             url = this.taskApiWebServer + "/app/api/v1/run-tree"
+                + query.get("treeName").get(0);
+            query.remove("treeName");
+        } catch (Exception e) {
+            throw new Exception("The query structure should be "
+                + "Source/To/Tree?query or provide a callbackId", e);  
+        }
         
         JSONObject queryJson = convertToJson(query);
         queryJson.put("Callback Id", callbackId);
@@ -514,12 +519,11 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         // Parse the Response String into a JSON Object
         JSONObject json = (JSONObject)JSONValue.parse(output);
         
-        if (response.getStatusLine().getStatusCode() >= 200
-            && response.getStatusLine().getStatusCode() < 300) {
+        int statusCode = response.getStatusLine().getStatusCode();
+        if ((statusCode < 200 || statusCode >= 300) && statusCode != 320) {
             
-            json.put("status", STATUS_FAILED); 
-        } else {
-            json.put("status", STATUS_COMPLETE);
+            throw new Exception("An error occurred trying to start the tree: "
+                + (String)json.get("message")); 
         }
         
         return json;
@@ -586,12 +590,6 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         http.setHeader("Authorization", "Basic " + new String(basicAuthBytes));
 
         return http;
-    }
-    
-    private HttpGet addTokenAuthenticationHeader(HttpGet get, String token) {
-        get.setHeader("Authorization","Bearer " + token );
-
-        return get;
     }
 
     // Escape query helper method that is used to escape queries that have spaces
