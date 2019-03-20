@@ -8,8 +8,10 @@ import com.kineticdata.bridgehub.adapter.BridgeRequest;
 import com.kineticdata.bridgehub.adapter.Count;
 import com.kineticdata.bridgehub.adapter.Record;
 import com.kineticdata.bridgehub.adapter.RecordList;
+import com.kineticdata.bridgehub.adapter.kinetictasksync.KineticTaskSyncQualificationParser;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,32 +45,6 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
     public Class getAdapterClass() {
         return KineticTaskSyncAdapter.class;
     }
-    
-    @Test
-    public void test_count() {
-        BridgeError error = null;
-        
-        assertNull(error);
-        
-        // Create the Bridge Request
-        List<String> fields = new ArrayList<String>();
-        fields.add("sn,mail");
-        
-        BridgeRequest request = new BridgeRequest();
-        request.setStructure("kinetic-task-sync-log");
-        request.setFields(fields);
-        request.setQuery("/Kinops/SyncTree/Test?Title='Test'&Description='Test 1'");
-        
-        Count count = null;
-        try {
-            count = getAdapter().count(request);
-        } catch (BridgeError e) {
-            error = e;
-        }
-        
-        assertNull(error);
-        assertTrue(count.getValue() > 0);
-    }
 
     @Test
     public void test_retrieve() throws BridgeError{
@@ -77,8 +53,6 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
         
         // Create the Bridge Request
         List<String> fields = new ArrayList<String>();
-        fields.add("sn");
-        fields.add("mail");
         
         request.setStructure("kinetic-task-sync-log");
         request.setFields(fields);
@@ -90,15 +64,13 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
         assertNotNull(recordMap);
     }
     
-        @Test
+    @Test
     public void test_bad_tree_name() throws BridgeError{
         
         BridgeRequest request = new BridgeRequest();
         
         // Create the Bridge Request
         List<String> fields = new ArrayList<String>();
-        fields.add("sn");
-        fields.add("mail");
         
         request.setStructure("kinetic-task-sync-log");
         request.setFields(fields);
@@ -117,12 +89,10 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
         
         // Create the Bridge Request
         List<String> fields = new ArrayList<String>();
-        fields.add("sn");
-        fields.add("mail");
         
         request.setStructure("kinetic-task-sync-log");
         request.setFields(fields);
-        request.setQuery("callbackId=06fa0a05-1818-4e3c-9b90-686afc23df64");
+        request.setQuery("callbackId=86d3d1ec-9d1f-49a5-880b-18a19be0e36c");
         
         Record record = getAdapter().retrieve(request);
         Map<String,Object> recordMap = record.getRecord();
@@ -130,25 +100,25 @@ public class KineticTaskSyncAdapterTest extends BridgeAdapterTestBase {
         assertNotNull(recordMap);
     }
 
-        @Test
-    public void test_search() throws BridgeError{
+    @Test
+    public void parse_query() throws BridgeError{
+        KineticTaskSyncQualificationParser qualificationParser 
+            = new KineticTaskSyncQualificationParser();
         
         BridgeRequest request = new BridgeRequest();
         
-        // Create the Bridge Request
-        List<String> fields = new ArrayList<String>();
-        fields.add("sn");
-        fields.add("mail");
+        Map parameters = new HashMap();
+        parameters.put("payload", "Hello");
+        request.setParameters(parameters);
+        request.setQuery("/Kinops/SyncTree/Test?payload=<%=parameter[\"payload\"]%>");
         
-        request.setStructure("kinetic-task-sync-log");
-        request.setFields(fields);
-        request.setQuery("/Kinops/SyncTree/Test?Title=\"Test\"&Description=\"Test 1\"");
+        Map<String,ArrayList<String>> parsedQuery = qualificationParser
+            .parseQuery(qualificationParser
+            .parse("/Kinops/SyncTree/Test?payload=<%=parameter[\"payload\"]%>",
+                parameters));
         
-        RecordList records = getAdapter().search(request);
-        
-        assertNotNull(records.getRecords().size() > 0);
+        assertNotNull(parsedQuery);
     }
-    
     
     /*---------------------------------------------------------------------------------------------
      * HELPER METHODS

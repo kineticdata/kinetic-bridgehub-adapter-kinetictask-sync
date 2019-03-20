@@ -14,12 +14,14 @@ public class KineticTaskSyncQualificationParser extends QualificationParser {
     protected static final org.slf4j.Logger logger 
         = LoggerFactory.getLogger(KineticTaskSyncAdapter.class);
     
-    public Map<String,ArrayList<String>> parseQuery(BridgeRequest request) {
+    public Map<String,ArrayList<String>> parseQuery(String queryString) {
         Map<String,ArrayList<String>> parsedQuery 
             = new HashMap<String,ArrayList<String>>();
         
+        logger.trace("The query to be parsed: " + queryString);
+        
         // Split the tree name from the rest of the query
-        String[] parts = request.getQuery().split("[?]",2);
+        String[] parts = queryString.split("[?]",2);
         ArrayList<String> partsList = new ArrayList(Arrays.asList(parts));
         if (partsList.size() > 0 && !partsList.get(0).contains("=")) {
             parsedQuery.put("treeName", new ArrayList<String>());

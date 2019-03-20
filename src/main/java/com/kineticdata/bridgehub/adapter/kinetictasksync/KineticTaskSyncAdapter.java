@@ -169,7 +169,8 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
         // username=test.user where parameter["Username"]=test.user
         KineticTaskSyncQualificationParser parser 
             = new KineticTaskSyncQualificationParser();
-        Map<String,ArrayList<String>> query = parser.parseQuery(request);
+        Map<String,ArrayList<String>> query = parser.parseQuery(
+            parser.parse(request.getQuery(), request.getParameters()));
            
         // Check if the inputted structure is valid. If it isn't, throw a BridgeError.
         if (!VALID_STRUCTURES.contains(request.getStructure())) {
@@ -196,8 +197,10 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
             JSONObject submission = poll(callbackId);
             // If a result was not found
             if (submission == null) {
+                record.put("results", "");
                 record.put("status", STATUS_NOT_FOUND);
                 record.put("callbackId", callbackId);
+                record.put("error", "");
             }
             // If a result was found
             else {
@@ -207,10 +210,14 @@ public class KineticTaskSyncAdapter implements BridgeAdapter {
                 record.put("results", (String)((JSONObject)submission.get("values"))
                     .get("Results"));
                 record.put("status", STATUS_COMPLETE);
+                record.put("callbackId", "");
+                record.put("error", "");
             }
         } catch (Exception e) {
             logger.error("Unexpected exception encountered.", e);
+            record.put("results", "");
             record.put("status", STATUS_FAILED);
+            record.put("callbackId", "");
             record.put("error", e.getMessage());
         }
         
