@@ -59,6 +59,7 @@ All Kinetic Task Sync models:
 * Will have Result Type of single
 * Will have the same 4 attributes defined 
 * Should have a Callback qualification
+
 All Kinetic Task Sync mappings:
 * Must use the kinetic-task-sync-log Structure
 
