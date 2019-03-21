@@ -18,6 +18,7 @@ These are the steps of the synchronous process:
 
 ### Potencial Results
 There are three potencial results from the adapter.  The different results depended on whether the execution was a success, failure or there was a timeout. Which properties in the return object that get populated are dependent the result of the execution.
+
 |          | Return Status | Not Empty Return Properties  | Status of Record              |
 |----------|---------------|------------------------------|-------------------------------|
 | Success  | Complete      | results, status              | deleted (unless delete fails) |
@@ -41,6 +42,7 @@ There are three potencial results from the adapter.  The different results depen
 
 ### Bridge Setup (done in Bridgehub)
 For instructions on [setting up a bridge](https://community.kineticdata.com/platform/releases/bridgehub-install-guide#creating-a-new-bridge).
+
 | Config Name          | Description                                                                  | Example Config Value                    |
 |----------------------|------------------------------------------------------------------------------|-----------------------------------------|
 | Task API Web Server  | The uri location for the Task Instance                                       | https://my-space.kinops.io/kinetic-task |
@@ -64,6 +66,7 @@ All Kinetic Task Sync mappings:
 Name: Incident
 
 Qualifications:
+
 | Qualification   | Result Type | Parameters       |
 |-----------------|-------------|------------------|
 | Callback        | Single      | callbackId       |
@@ -80,6 +83,7 @@ Name: Incident
 Structure: kinetic-task-sync-log
 
 Attribute Mappings:
+
 | Attribute | Mapped Value            |
 |-----------|-------------------------|
 | Callback  | ${fields('callbackId')} |
@@ -88,11 +92,12 @@ Attribute Mappings:
 | Status    | ${fields('status')}     |
 
 Qualification Mappings:
+
 | Attribute       | Mapped Value                                                                             |
 |-----------------|------------------------------------------------------------------------------------------|
 | Callback        | callbackId=${parameters('callbackId')}                                                   |
 | Create Incident | /Adhoc/Incident/Create?Title=${parameters('Title')}&Requestor=${parameters('Requestor')} |
 
 **Note**: The Task Tree that the adpter will fire is configured in the model mappings.
-* The Tree name pattern is /<Source>/<Group>/<Name>
-* The qualification pattern is tree name followed by a question mark then parameters.  ex: /<Source>/<Group>/<Name>?payload=${parameters('payload')}
+* The Tree name pattern is /{Source}/{Group}/{Name}
+* The qualification pattern is tree name followed by a question mark then parameters.  ex: /{Source}/{Group}/{Name}?payload=${parameters('payload')}
